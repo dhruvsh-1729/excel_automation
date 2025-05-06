@@ -13,71 +13,108 @@ type FilterCondition = {
 type FilterGroup = {
   id: string;
   conditions: FilterCondition[];
+  breakpoints: number[];
   filteredItems: string[];
-  generatedNumbers: string[];
 };
 
-type ItemWithSource = {
-  id: string;
-  value: string;
-  source: string | 'unmatched';
-  number?: string;
+type Subgroup = {
+  suffix: string;
+  items: string[];
+  numbers: string[];
 };
 
 const ExcelReader = () => {
-  // const [items, setItems] = useState<ItemWithSource[]>([]);
   const [groups, setGroups] = useState<FilterGroup[]>([]);
-const [originalData, setOriginalData] = useState<string[]>([]);
+  const [originalData, setOriginalData] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [nextGroupId, setNextGroupId] = useState(1);
   const [fileName, setFileName] = useState('');
   const [baseNumber, setBaseNumber] = useState('13');
 
- // derived computed values
-const processedGroups = useMemo(() => {
-  const remainingItems = new Set(originalData);
+  const processedGroups = useMemo(() => {
+    const remainingItems = new Set(originalData);
+    
+    return groups.map(group => {
+      const filtered = Array.from(remainingItems).filter(item =>
+        group.conditions.every(condition => {
+          const itemLower = item.toLowerCase();
+          const searchValue = condition.value.toLowerCase();
 
-  const result = groups.map(group => {
-    const filtered = Array.from(remainingItems).filter(item =>
-      group.conditions.every(condition => {
-        const itemLower = item.toLowerCase();
-        const searchValue = condition.value.toLowerCase();
+          let matches = false;
+          switch (condition.type) {
+            case 'contains': matches = itemLower.includes(searchValue); break;
+            case 'startsWith': matches = itemLower.startsWith(searchValue); break;
+            case 'endsWith': matches = itemLower.endsWith(searchValue); break;
+            case 'equals': matches = itemLower === searchValue; break;
+          }
 
-        let matches = false;
-        switch (condition.type) {
-          case 'contains': matches = itemLower.includes(searchValue); break;
-          case 'startsWith': matches = itemLower.startsWith(searchValue); break;
-          case 'endsWith': matches = itemLower.endsWith(searchValue); break;
-          case 'equals': matches = itemLower === searchValue; break;
+          return condition.negate ? !matches : matches;
+        })
+      );
+
+      filtered.forEach(item => remainingItems.delete(item));
+      return { ...group, filteredItems: filtered };
+    });
+  }, [groups, originalData]);
+
+  const items = useMemo(() => {
+    return originalData.map((value, index) => {
+      let number, source = 'unmatched';
+      
+      for (const group of processedGroups) {
+        let currentIndex = 0;
+        for (const bp of group.breakpoints) {
+          const end = currentIndex + bp;
+          const subgroupItems = group.filteredItems.slice(currentIndex, end);
+          const itemIndex = subgroupItems.indexOf(value);
+          
+          if (itemIndex > -1) {
+            const suffix = group.breakpoints.length > 0 
+              ? String.fromCharCode(65 + group.breakpoints.indexOf(bp)) 
+              : '';
+            number = `${baseNumber}.${group.id}${suffix ? `${suffix}.` : '.'}${itemIndex + 1}`;
+            source = group.id;
+            break;
+          }
+          currentIndex = end;
         }
+        
+        if (source === 'unmatched') {
+          const remaining = group.filteredItems.slice(currentIndex);
+          const itemIndex = remaining.indexOf(value);
+          if (itemIndex > -1) {
+            const suffix = group.breakpoints.length > 0 
+              ? String.fromCharCode(65 + group.breakpoints.length) 
+              : '';
+            number = `${baseNumber}.${group.id}${suffix ? `${suffix}.` : '.'}${itemIndex + 1}`;
+            source = group.id;
+          }
+        }
+        
+        if (source !== 'unmatched') break;
+      }
+      
+      return { id: `item-${index}`, value, source, number };
+    });
+  }, [originalData, processedGroups, baseNumber]);
 
-        return condition.negate ? !matches : matches;
-      })
-    );
+  const totalMatched = useMemo(() => 
+    processedGroups.reduce((sum, group) => sum + group.filteredItems.length, 0),
+    [processedGroups]
+  );
 
-    filtered.forEach(item => remainingItems.delete(item));
+  const unmatchedCount = originalData.length - totalMatched;
 
-    return {
-      ...group,
-      filteredItems: filtered,
-      generatedNumbers: filtered.map((_, i) => `${baseNumber}.${group.id}.${i + 1}`)
+  const addGroup = () => {
+    const newGroup: FilterGroup = {
+      id: nextGroupId.toString(),
+      conditions: [{ id: uuidv4(), type: 'contains', value: '', negate: false }],
+      breakpoints: [],
+      filteredItems: []
     };
-  });
-
-  return result;
-}, [groups, originalData, baseNumber]);
-
-const items = useMemo(() => {
-  return originalData.map((value, index) => {
-    const matchedGroup = processedGroups.find(g => g.filteredItems.includes(value));
-    return {
-      id: `item-${index}-${value}`,
-      value,
-      source: matchedGroup?.id || 'unmatched',
-      number: matchedGroup?.generatedNumbers[matchedGroup?.filteredItems.indexOf(value)]
-    };
-  });
-}, [originalData, processedGroups]);
+    setGroups(prev => [...prev, newGroup]);
+    setNextGroupId(prev => prev + 1);
+  };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -116,26 +153,6 @@ const items = useMemo(() => {
       }
     };
     reader.readAsArrayBuffer(file);
-  };
-
-  const addGroup = () => {
-    console.log('Adding new group with ID:', nextGroupId);
-    
-    const newId = nextGroupId.toString();
-    const newGroup: FilterGroup = {
-      id: newId,
-      conditions: [{
-        id: uuidv4(),
-        type: 'contains',
-        value: '',
-        negate: false
-      }],
-      filteredItems: [],
-      generatedNumbers: []
-    };
-  
-    setGroups(prev => [...prev, newGroup]);
-    setNextGroupId(prev => prev + 1);
   };
   
   const addConditionToGroup = (groupId: string) => {
@@ -188,99 +205,219 @@ const items = useMemo(() => {
   };
 
   const exportData = (format: 'xlsx' | 'csv' | 'xls') => {
-    // Prepare the sheet data
     const sheetData: any[][] = [];
     const headerRow: string[] = [];
+    const allColumns: { numbers: string[]; items: string[] }[] = [];
 
+    // Process groups
+    processedGroups.forEach(group => {
+      const subgroups = getSubgroups(group);
+      const groupNumbers: string[] = [];
+      const groupItems: string[] = [];
+
+      subgroups.forEach((subgroup, subIndex) => {
+        // Determine numbering format based on breakpoints
+        const useSuffix = group.breakpoints.length > 0;
+
+        subgroup.numbers.forEach((num, index) => {
+          const baseNumbering = `${baseNumber}.${group.id}`;
+          const numbering = useSuffix
+            ? `${baseNumbering}${subgroup.suffix}.${index + 1}`
+            : `${baseNumbering}.${index + 1}`;
+          groupNumbers.push(numbering);
+        });
+
+        subgroup.items.forEach(item => groupItems.push(item));
+
+        // Add empty row after subgroup except last
+        if (subIndex < subgroups.length - 1) {
+          groupNumbers.push('');
+          groupItems.push('');
+        }
+      });
+
+      allColumns.push({ numbers: groupNumbers, items: groupItems });
+      headerRow.push(``, `${baseNumber}.${group.id}`);
+    });
+
+    // Process unmatched items
     const unmatchedItems = originalData.filter(item => 
       !processedGroups.some(group => group.filteredItems.includes(item))
     );
-
-    // Build headers: [empty, GroupName], [empty, GroupName], ..., [empty, Unmatched]
-    processedGroups.forEach((group) => {
-      headerRow.push('', `${baseNumber}.${group.id}`);
-    });
-    if(unmatchedItems.length > 0) {
+    const unmatchedNumbers = unmatchedItems.map((_, i) => `${baseNumber}.${nextGroupId}.${i + 1}`);
+    
+    if (unmatchedItems.length > 0) {
+      allColumns.push({
+        numbers: unmatchedNumbers,
+        items: unmatchedItems
+      });
       headerRow.push('', `${baseNumber}.${nextGroupId}`);
     }
+
     sheetData.push(headerRow);
 
-    // Find the max number of rows needed (longest group or unmatched items)
-    const maxRows = Math.max(
-      ...processedGroups.map(group => group.filteredItems.length),
-      originalData.filter(item => !processedGroups.some(group => group.filteredItems.includes(item))).length
-    );
+    // Calculate max rows needed
+    const maxRows = Math.max(...allColumns.map(col => col.numbers.length));
 
-    // Fill in rows
+    // Build data rows
     for (let i = 0; i < maxRows; i++) {
       const row: any[] = [];
-
-      processedGroups.forEach(group => {
-        const number = group.generatedNumbers[i] || '';
-        const value = group.filteredItems[i] || '';
-        row.push(number, value);
+      allColumns.forEach(col => {
+        row.push(col.numbers[i] || '');
+        row.push(col.items[i] || '');
       });
-
-      const unmatchedNumber = i < unmatchedItems.length ? `${baseNumber}.${nextGroupId}.${i + 1}` : '';
-      const unmatchedValue = unmatchedItems[i] || '';
-      row.push(unmatchedNumber, unmatchedValue);
-
       sheetData.push(row);
     }
 
-    // Export the sheet
+    // Create and export workbook
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, fileName || 'Sheet1');
-    XLSX.writeFile(wb, `${fileName || 'Sheet 1'}.${format}`);
+    XLSX.writeFile(wb, `${fileName || 'export'}.${format}`);
+  };
+
+  const addBreakpoint = (groupId: string) => {
+    setGroups(prev => prev.map(g => 
+      g.id === groupId ? { ...g, breakpoints: [...g.breakpoints, 1] } : g
+    ));
+  };
+
+  const removeBreakpoint = (groupId: string, index: number) => {
+    setGroups(prev => prev.map(g => 
+      g.id === groupId ? { ...g, breakpoints: g.breakpoints.filter((_, i) => i !== index) } : g
+    ));
+  };
+
+  const updateBreakpoint = (groupId: string, index: number, value: number) => {
+    setGroups(prev => prev.map(g => 
+      g.id === groupId ? { 
+        ...g, 
+        breakpoints: g.breakpoints.map((bp, i) => i === index ? Math.max(1, value) : bp) 
+      } : g
+    ));
+  };
+
+  const getSubgroups = (group: FilterGroup): Subgroup[] => {
+    let currentIndex = 0;
+    const subgroups: Subgroup[] = [];
+    
+    group.breakpoints.forEach((bp, idx) => {
+      const end = currentIndex + bp;
+      const items = group.filteredItems.slice(currentIndex, end);
+      subgroups.push({
+        suffix: String.fromCharCode(65 + idx),
+        items,
+        numbers: items.map((_, i) => `${baseNumber}.${group.id}${String.fromCharCode(65 + idx)}.${i + 1}`)
+      });
+      currentIndex = end;
+    });
+
+    if (currentIndex < group.filteredItems.length) {
+      const items = group.filteredItems.slice(currentIndex);
+      subgroups.push({
+        suffix: String.fromCharCode(65 + group.breakpoints.length),
+        items,
+        numbers: items.map((_, i) => `${baseNumber}.${group.id}${String.fromCharCode(65 + group.breakpoints.length)}.${i + 1}`)
+      });
+    }
+
+    return subgroups;
   };
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Advanced Excel Filter</h1>
-
-      <div className="mb-4 flex items-center gap-4">
-        <label className="block mb-2">
-          File Name:
-          <input
-            type="text"
-            value={fileName}
-            onChange={(e) => setFileName(e.target.value)}
-            className="ml-2 p-2 border rounded"
-            placeholder="Enter file name"
-          />
-        </label>
-        <label className="block mb-2">
-          Base Number:
-          <input
-            type="text"
-            value={baseNumber}
-            onChange={(e) => setBaseNumber(e.target.value)}
-            className="ml-2 p-2 border rounded"
-            placeholder="Enter base number"
-          />
-        </label>
-        <div className="">
-        <label className="bg-blue-500 text-white px-4 py-2 rounded cursor-pointer hover:bg-blue-600">
-          Upload Excel File
-          <input type="file" className="hidden" accept=".xlsx,.xls" onChange={handleFile} />
-        </label>
-      {error && <p className="text-red-500 mb-4">{error}</p>}
+      {/* Header Section */}
+      <div className="mb-4 grid gap-4 md:grid-cols-3">
+        <div className="space-y-2">
+          <label className="block text-sm">
+            File Name:
+            <input type="text" value={fileName} onChange={e => setFileName(e.target.value)}
+              className="ml-2 p-1 border rounded w-full" />
+          </label>
+          <label className="block text-sm">
+            Base Number:
+            <input type="text" value={baseNumber} onChange={e => setBaseNumber(e.target.value)}
+              className="ml-2 p-1 border rounded w-full" />
+          </label>
+        </div>
+        
+        <div className="space-y-2">
+          <label className="block text-sm">
+            Upload Excel:
+            <input type="file" accept=".xlsx,.xls" onChange={handleFile}
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-1 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          </label>
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+        </div>
+        
+        <div className="space-y-2">
+          <div className="text-sm">Total Items: {originalData.length}</div>
+          <div className="text-sm">Matched Items: {totalMatched}</div>
+          <div className="text-sm">Unmatched Items: {unmatchedCount}</div>
+        </div>
       </div>
-      <button 
-          onClick={addGroup}
-          className="bg-green-500 text-white px-4 py-2 rounded mr-4 cursor-pointer hover:bg-green-600"
-        >
-          Add New Group
+
+      {/* Groups Section */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-4">
+        {groups.map(group => {
+          const subgroups = getSubgroups(group);
+          return (
+            <div key={group.id} className="p-3 border rounded bg-gray-50">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-semibold text-sm">Group {baseNumber}.{group.id}</h3>
+                <span className="text-xs text-gray-600">({group.filteredItems.length} items)</span>
+              </div>
+              
+              {/* Breakpoints Section */}
+              <div className="mb-3">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-medium">Subgroups:</span>
+                  <button onClick={() => addBreakpoint(group.id)} className="text-xs bg-green-500 text-white px-2 py-1 rounded">
+                    Add Breakpoint
+                  </button>
+                </div>
+                
+                <div className="space-y-1">
+                  {group.breakpoints.map((bp, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input type="number" value={bp} min="1"
+                        onChange={e => updateBreakpoint(group.id, idx, parseInt(e.target.value))}
+                        className="w-16 p-1 text-xs border rounded" />
+                      <span className="text-xs">
+                        → {subgroups[idx]?.items.length || 0} items
+                      </span>
+                      <button onClick={() => removeBreakpoint(group.id, idx)} className="text-xs bg-red-500 text-white px-2 py-1 rounded">
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Subgroups Preview */}
+              {subgroups.length > 0 && (
+                <div className="text-xs space-y-1">
+                  {subgroups.map((sg, idx) => (
+                    <div key={idx} className="flex justify-between items-center">
+                      <span>{baseNumber}.{group.id}{sg.suffix}:</span>
+                      <span>{sg.items.length} items</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Export and Add Group Buttons */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <button onClick={addGroup} className="text-sm bg-green-500 text-white px-3 py-1 rounded">
+          + Add Group
         </button>
-        <div className="">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => exportData('xlsx')}
-            className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600"
-          >
-            Export XLSX
-          </button>
+        <button onClick={() => exportData('xlsx')} className="text-sm bg-purple-500 text-white px-3 py-1 rounded">
+          Export XLSX
+        </button>
           <button 
             onClick={() => exportData('csv')}
             className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600"
@@ -294,9 +431,6 @@ const items = useMemo(() => {
             Export XLS
           </button>
         </div>
-      </div>
-      </div>
-
       
       <div className="grid grid-cols-3 gap-4 mb-8">
         {groups.map(group => (
