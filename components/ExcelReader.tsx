@@ -365,7 +365,7 @@ const ExcelReader = () => {
             <div key={group.id} className="p-3 border rounded bg-gray-50">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="font-semibold text-sm">Group {baseNumber}.{group.id}</h3>
-                <span className="text-xs text-gray-600">({group.filteredItems.length} items)</span>
+                {/* <span className="text-xs text-gray-600">({group.filteredItems.length} items)</span> */}
               </div>
               
               {/* Breakpoints Section */}
@@ -384,7 +384,7 @@ const ExcelReader = () => {
                         onChange={e => updateBreakpoint(group.id, idx, parseInt(e.target.value))}
                         className="w-16 p-1 text-xs border rounded" />
                       <span className="text-xs">
-                        → {subgroups[idx]?.items.length || 0} items
+                        {/* → {subgroups[idx]?.items.length} items */}
                       </span>
                       <button onClick={() => removeBreakpoint(group.id, idx)} className="text-xs bg-red-500 text-white px-2 py-1 rounded">
                         ×
@@ -400,7 +400,7 @@ const ExcelReader = () => {
                   {subgroups.map((sg, idx) => (
                     <div key={idx} className="flex justify-between items-center">
                       <span>{baseNumber}.{group.id}{sg.suffix}:</span>
-                      <span>{sg.items.length} items</span>
+                      {/* <span>{sg.items.length} items</span> */}
                     </div>
                   ))}
                 </div>
