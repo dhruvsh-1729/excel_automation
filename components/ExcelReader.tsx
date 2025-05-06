@@ -309,12 +309,6 @@ const items = useMemo(() => {
               >
                 Add Condition
               </button>
-              <button 
-                onClick={() => addConditionToGroup(group.id)}
-                className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
-              >
-                Add Condition
-              </button>
             </div>
             
             <div className="space-y-4">
