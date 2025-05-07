@@ -36,7 +36,7 @@ const ExcelReader = () => {
     
     return groups.map(group => {
       const filtered = Array.from(remainingItems).filter(item =>
-        group.conditions.every(condition => {
+        group.conditions.some(condition => {
           const itemLower = item.toLowerCase();
           const searchValue = condition.value.toLowerCase();
 
